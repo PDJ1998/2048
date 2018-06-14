@@ -1,0 +1,550 @@
+//i write remark by korean to study JS so it have some mistake So if you find the wrong part plz modify the remark  
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title></title>
+</head>
+<body>
+<script type="text/javascript">
+
+document.addEventListener("DOMContentLoaded", function () {
+  // 게임이 화면이 전부 렌더링 된 후 다음 함수를 실행
+  window.requestAnimationFrame(function () { //애니메이션 수행전 다음 작업을 수행합니다.
+    var manager = new GameManager(4, KeyboardInputManager, HTMLActuator);//
+  });
+});
+
+
+function GameManager(size, InputManager, Actuator) {
+  this.size         = size; // 격자의 크기를 나타냄
+  this.inputManager = new InputManager;
+  this.actuator     = new Actuator;
+
+  this.startTiles   = 2;//두 개의 파일로 시작합니다.
+
+  this.inputManager.on("move", this.move.bind(this));//이벤트를 move에 바인딩 합니다
+  this.inputManager.on("restart", this.restart.bind(this));//이벤트를 restart에 바인딩합니다
+
+  this.setup();//37번째 란에 setup에 정의가 있음
+}
+
+// 게임을 재시작 하는 함수 
+GameManager.prototype.restart = function () {
+  this.actuator.restart();
+  this.setup();
+};
+
+// 게임 기본 설정 
+GameManager.prototype.setup = function () {
+  this.grid         = new Grid(this.size);
+
+  this.score        = 0;
+  this.over         = false;
+  this.won          = false;
+
+  
+  this.addStartTiles();// 처음 타일을 추가합니다
+
+  
+  this.actuate();// 정보를 업데이트해줍니다
+};
+  
+//게임 시작시 타일을 깔아 놓습니다.
+GameManager.prototype.addStartTiles = function () {
+  for (var i = 0; i < this.startTiles; i++) {//startTile은 22번째줄에 2로 놓왔음
+    this.addRandomTile();
+  }
+};
+
+// 타일을 램덤한 위치에 놓게 합니다.
+GameManager.prototype.addRandomTile = function () {
+  if (this.grid.cellsAvailable()) {
+    var value = Math.random() < 0.9 ? 2 : 4;//처음 타일 배치 2,2 99% 2,4 90% 4,4 1%
+    var tile = new Tile(this.grid.randomAvailableCell(), value);
+
+    this.grid.insertTile(tile);//타일 삽입 
+  }
+};
+
+// 실행자에게 정보를 업데이트해줍니다. 
+GameManager.prototype.actuate = function () {
+  this.actuator.actuate(this.grid, {
+    score: this.score,
+    over:  this.over,
+    won:   this.won
+  });
+};
+
+// 타일 위치를 저장하고 병합정보를 지웁니다.
+GameManager.prototype.prepareTiles = function () {
+  this.grid.eachCell(function (x, y, tile) {
+    if (tile) {
+      tile.mergedFrom = null;
+      tile.savePosition();
+    }
+  });
+};
+
+// 타일을 움직입니다.
+GameManager.prototype.moveTile = function (tile, cell) {
+  this.grid.cells[tile.x][tile.y] = null;
+  this.grid.cells[cell.x][cell.y] = tile;
+  tile.updatePosition(cell);
+};
+
+// 지정된 방향으로 타일을 이동케 합니다.
+GameManager.prototype.move = function (direction) {
+  // 0: up, 1: right, 2:down, 3: left
+  var self = this;
+
+  if (this.over || this.won) return; // 게임오버나 클리어시 작동을 멈추게함.
+
+  var cell, tile;
+
+  var vector     = this.getVector(direction);
+  var traversals = this.buildTraversals(vector);
+  var moved      = false;
+
+  this.prepareTiles();//78번 정의 (타일 위치를 저장하고 병합정보를 지웁니다.)
+
+  // 타일이동.
+  traversals.x.forEach(function (x) {
+    traversals.y.forEach(function (y) {
+      cell = { x: x, y: y };
+      tile = self.grid.cellContent(cell);
+
+      if (tile) {
+        var positions = self.findFarthestPosition(cell, vector);
+        var next      = self.grid.cellContent(positions.next);
+
+        //??????
+        if (next && next.value === tile.value && !next.mergedFrom) {
+          var merged = new Tile(positions.next, tile.value * 2);
+          merged.mergedFrom = [tile, next];
+
+          self.grid.insertTile(merged);
+          self.grid.removeTile(tile);
+
+          // 합쳐진 타일의 위치정보 동일시 하기.
+          tile.updatePosition(positions.next);
+
+          // 점수 업데이트.
+          self.score += merged.value;
+
+          // 승리조건
+          if (merged.value === 2048) self.won = true;
+        } else {
+          self.moveTile(tile, positions.farthest);
+        }
+
+        if (!self.positionsEqual(cell, tile)) {
+          moved = true; // 타일이 원래 셀에서 부터 움직이게 합니다.
+        }
+      }
+    })t
+  });
+
+  if (moved) {
+    this.addRandomTile();
+
+    if (!this.movesAvailable()) {
+      this.over = true; // 졌네요 ㅠㅜ
+    }
+
+    this.actuate();
+  }
+};
+
+//선택된 방향을 나타내는 벡터 불러오기.
+GameManager.prototype.getVector = function (direction) {
+  var map = {
+    0: { x: 0,  y: -1 }, // up
+    1: { x: 1,  y: 0 },  // right
+    2: { x: 0,  y: 1 },  // down
+    3: { x: -1, y: 0 }   // left
+  };
+
+  return map[direction];
+};
+
+//이동 순서 목록 
+GameManager.prototype.buildTraversals = function (vector) {
+  var traversals = { x: [], y: [] };
+
+  for (var pos = 0; pos < this.size; pos++) {
+    traversals.x.push(pos);
+    traversals.y.push(pos);
+  }
+
+  // 항상 가장먼 셀에서부터 이동합니다.
+  if (vector.x === 1) traversals.x = traversals.x.reverse();
+  if (vector.y === 1) traversals.y = traversals.y.reverse();
+
+  return traversals;
+};
+
+GameManager.prototype.findFarthestPosition = function (cell, vector) {
+  var previous;
+
+  // 장애물이 나타나기 전까지 벡터방향으로 이동합니다.
+  do {
+    previous = cell;
+    cell     = { x: previous.x + vector.x, y: previous.y + vector.y };
+  } while (this.grid.withinBounds(cell) &&
+           this.grid.cellAvailable(cell));
+
+  return {
+    farthest: previous,
+    next: cell // 병합 필요 확인용도
+  };
+};
+
+GameManager.prototype.movesAvailable = function () {
+  return this.grid.cellsAvailable() || this.tileMatchesAvailable();
+};
+
+// 타일들이 일치여부를 확인하는 메서드.
+GameManager.prototype.tileMatchesAvailable = function () {
+  var self = this;
+
+  var tile;
+
+  for (var x = 0; x < this.size; x++) {
+    for (var y = 0; y < this.size; y++) {
+      tile = this.grid.cellContent({ x: x, y: y });
+
+      if (tile) {
+        for (var direction = 0; direction < 4; direction++) {
+          var vector = self.getVector(direction);
+          var cell   = { x: x + vector.x, y: y + vector.y };
+
+          var other  = self.grid.cellContent(cell);
+          if (other) {
+          }
+
+          if (other && other.value === tile.value) {
+            return true; // 이 두 타일은 병합이 가능하다.
+          }
+        }
+      }
+    }
+  }
+
+  return false;
+};
+
+GameManager.prototype.positionsEqual = function (first, second) {
+  return first.x === second.x && first.y === second.y;
+};
+
+
+//격자 설정.
+function Grid(size) {
+  this.size = size;
+
+  this.cells = [];
+
+  this.build();
+}
+
+// 지정된 크기의격자를 구축
+Grid.prototype.build = function () {
+  for (var x = 0; x < this.size; x++) {
+    var row = this.cells[x] = [];
+
+    for (var y = 0; y < this.size; y++) {
+      row.push(null);
+    }
+  }
+};
+
+// 처음 시작시 타일을 램덤하게 배치하기위한 메서드.
+Grid.prototype. randomAvailableCell = function () {
+  var cells = this.availableCells();
+
+  if (cells.length) {
+    return cells[Math.floor(Math.random() * cells.length)];
+  }
+};
+//빈 셀의 좌표값 
+Grid.prototype.availableCells = function () {
+  var cells = [];
+
+  this.eachCell(function (x, y, tile) {
+    if (!tile) {
+      cells.push({ x: x, y: y });
+    }
+  });
+
+  return cells;
+};
+
+//격자 안의 모든 셀 정보를 담기.
+Grid.prototype.eachCell = function (callback) {
+  for (var x = 0; x < this.size; x++) {
+    for (var y = 0; y < this.size; y++) {
+      callback(x, y, this.cells[x][y]);
+    }
+  }
+};
+
+// 빈셀을 확인하는 함수 
+Grid.prototype.cellsAvailable = function () {
+  return !!this.availableCells().length;
+};
+
+// Check if the specified cell is taken
+Grid.prototype.cellAvailable = function (cell) {
+  return !this.cellOccupied(cell);
+};
+
+Grid.prototype.cellOccupied = function (cell) {
+  return !!this.cellContent(cell);
+};
+//셀 안에 타일 확인.
+Grid.prototype.cellContent = function (cell) {
+  if (this.withinBounds(cell)) {
+    return this.cells[cell.x][cell.y];
+  } else {
+    return null;
+  }
+};
+
+// 해당 위치에 타일을 삽입합니다.
+Grid.prototype.insertTile = function (tile) {
+  this.cells[tile.x][tile.y] = tile;
+};
+//해당 위치에 타일을 비워놓습니다.
+Grid.prototype.removeTile = function (tile) {
+  this.cells[tile.x][tile.y] = null;
+};
+//(?)타일을 경계 내에만 위치하도록 합니다.
+Grid.prototype.withinBounds = function (position) {
+  return position.x >= 0 && position.x < this.size &&
+         position.y >= 0 && position.y < this.size;
+};
+
+//지정된 클래스 명의 요소들을 첨부.
+function HTMLActuator() {
+  this.tileContainer    = document.getElementsByClassName("tile-container")[0];
+  this.scoreContainer   = document.getElementsByClassName("score-container")[0];
+  this.messageContainer = document.getElementsByClassName("game-message")[0];
+
+  this.score = 0;
+}
+//모든 타일이 구현하게끔한다.
+HTMLActuator.prototype.actuate = function (grid, metadata) {
+  var self = this;
+
+  window.requestAnimationFrame(function () {
+    self.clearContainer(self.tileContainer);
+
+    grid.cells.forEach(function (column) {
+      column.forEach(function (cell) {
+        if (cell) {
+          self.addTile(cell);
+        }
+      });
+    });
+
+    self.updateScore(metadata.score);
+
+    if (metadata.over) self.message(false); // 패배.
+    if (metadata.won) self.message(true); // 승리.
+  });
+};
+
+HTMLActuator.prototype.restart = function () {
+  this.clearMessage();
+};
+//노드를 공백으로 만듭니다.
+HTMLActuator.prototype.clearContainer = function (container) {
+  while (container.firstChild) {
+    container.removeChild(container.firstChild);
+  }
+};
+
+HTMLActuator.prototype.addTile = function (tile) {
+  var self = this;
+
+  var element   = document.createElement("div");
+  var position  = tile.previousPosition || { x: tile.x, y: tile.y };
+  positionClass = this.positionClass(position);
+
+  
+  var classes = ["tile", "tile-" + tile.value, positionClass];
+  this.applyClasses(element, classes);
+
+  element.textContent = tile.value;//타일에 표현될 수.
+
+  if (tile.previousPosition) {
+    // 이전 위치에서 타일이 표현됬는지 확인.
+    window.requestAnimationFrame(function () {
+      classes[2] = self.positionClass({ x: tile.x, y: tile.y });
+      self.applyClasses(element, classes); // 위치 업데이트.
+    });
+  } else if (tile.mergedFrom) {
+    classes.push("tile-merged");
+    this.applyClasses(element, classes);
+
+    // 병합된 파일 표현.
+    tile.mergedFrom.forEach(function (merged) {
+      self.addTile(merged);
+    });
+  } else {
+    classes.push("tile-new");
+    this.applyClasses(element, classes);
+  }
+
+  // 타일을 나타냅니다. 
+  this.tileContainer.appendChild(element);
+};
+  //설정한 클래스를 적용.
+HTMLActuator.prototype.applyClasses = function (element, classes) {
+  element.setAttribute("class", classes.join(" "));
+};
+//원래 인덱스값이 0에서 부터 시작하니까 1을 추가해서 보통처럼 1로부터 시작하게 만듬.
+HTMLActuator.prototype.normalizePosition = function (position) {
+  return { x: position.x + 1, y: position.y + 1 };
+};
+
+HTMLActuator.prototype.positionClass = function (position) {
+  position = this.normalizePosition(position);
+  return "tile-position-" + position.x + "-" + position.y;
+};
+//점수 표기법.
+HTMLActuator.prototype.updateScore = function (score) {
+  this.clearContainer(this.scoreContainer);
+
+  var difference = score - this.score;
+  this.score = score;
+
+  this.scoreContainer.textContent = this.score;
+
+  if (difference > 0) {
+    var addition = document.createElement("div");
+    addition.classList.add("score-addition");
+    addition.textContent = "+" + difference;
+
+    this.scoreContainer.appendChild(addition);
+  }
+};
+//게임 중 상태 메세지 표현법.
+HTMLActuator.prototype.message = function (won) {
+  var type    = won ? "game-won" : "game-over";
+  var message = won ? "You win!" : "Game over!"
+
+  this.messageContainer.classList.add(type);
+  this.messageContainer.getElementsByTagName("p")[0].textContent = message;
+};
+
+HTMLActuator.prototype.clearMessage = function () {
+  this.messageContainer.classList.remove("game-won", "game-over");
+};
+
+
+//이벤트 구현 방법 설정.
+function KeyboardInputManager() {
+  this.events = {};
+
+  this.listen();
+}
+
+KeyboardInputManager.prototype.on = function (event, callback) {
+  if (!this.events[event]) {
+    this.events[event] = [];
+  }
+  this.events[event].push(callback);
+};
+
+KeyboardInputManager.prototype.emit = function (event, data) {
+  var callbacks = this.events[event];
+  if (callbacks) {
+    callbacks.forEach(function (callback) {
+      callback(data);
+    });
+  }
+};
+
+KeyboardInputManager.prototype.listen = function () {
+  var self = this;
+
+  var map = {
+    38: 0, // Up
+    39: 1, // Right
+    40: 2, // Down
+    37: 3, // Left
+    75: 0, // vim keybindings
+    76: 1,
+    74: 2,
+    72: 3
+  };
+
+  document.addEventListener("keydown", function (event) {
+    var modifiers = event.altKey || event.ctrlKey || event.metaKey ||
+                    event.shiftKey;
+    var mapped    = map[event.which];
+
+    if (!modifiers) {
+      if (mapped !== undefined) {
+        event.preventDefault();
+        self.emit("move", mapped);
+      }
+
+      if (event.which === 32) self.restart.bind(self)(event);
+    }
+  });
+
+  var retry = document.getElementsByClassName("retry-button")[0];
+  retry.addEventListener("click", this.restart.bind(this));
+
+  
+  var gestures = [Hammer.DIRECTION_UP, Hammer.DIRECTION_RIGHT,
+                  Hammer.DIRECTION_DOWN, Hammer.DIRECTION_LEFT];
+
+  var gameContainer = document.getElementsByClassName("game-container")[0];
+  var handler       = Hammer(gameContainer, {
+    drag_block_horizontal: true,
+    drag_block_vertical: true
+  });
+  
+  handler.on("swipe", function (event) {
+    event.gesture.preventDefault();
+    mapped = gestures.indexOf(event.gesture.direction);
+
+    if (mapped !== -1) self.emit("move", mapped);
+  });
+};
+
+KeyboardInputManager.prototype.restart = function (event) {
+  event.preventDefault();
+  this.emit("restart");//재시작 
+};
+
+
+
+
+
+function Tile(position, value) {
+  this.x                = position.x;
+  this.y                = position.y;
+  this.value            = value || 2;
+
+  this.previousPosition = null;
+  this.mergedFrom       = null; // 병합된 파일을 추적합니다.
+}
+
+Tile.prototype.savePosition = function () {
+  this.previousPosition = { x: this.x, y: this.y };
+};
+//타일의 변경위치 업데이트.
+Tile.prototype.updatePosition = function (position) {
+  this.x = position.x;
+  this.y = position.y;
+};
+
+
+</script>
+</body>
+</html>
